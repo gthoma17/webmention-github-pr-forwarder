@@ -119,7 +119,10 @@ module WebmentionForwarder
     end
 
     def read_github_token
-      credentials_path = ENV['GITHUB_CREDENTIALS_PATH'] || File.expand_path('~/.github_credentials')
+      credentials_path = File.expand_path('~/.github_credentials')
+      unless !ENV['GITHUB_CREDENTIALS_PATH']
+        credentials_path = File.expand_path(ENV['GITHUB_CREDENTIALS_PATH'])
+      end
       
       unless File.exist?(credentials_path)
         raise "GitHub credentials file not found at #{credentials_path}. Please create this file with your GitHub Personal Access Token."
