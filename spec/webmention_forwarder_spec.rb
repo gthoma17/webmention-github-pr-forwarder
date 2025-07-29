@@ -34,12 +34,25 @@ describe WebmentionForwarder::Application do
 
   describe 'POST /webmention' do
     context 'with valid parameters' do
-      let(:mock_client) { instance_double(Octokit::Client) }
-      let(:mock_pr) { double('PR', number: 123, html_url: 'https://github.com/test-owner/test-repo/pull/123') }
-
       before do
-        allow(Octokit::Client).to receive(:new).and_return(mock_client)
-        allow(mock_client).to receive(:create_pull_request).and_return(mock_pr)
+        # Mock the GitHub API endpoint
+        stub_request(:post, "https://api.github.com/repos/test-owner/test-repo/pulls")
+          .with(
+            headers: {
+              'Authorization' => 'Bearer test_github_token',
+              'Accept' => 'application/vnd.github+json',
+              'Content-Type' => 'application/json',
+              'User-Agent' => 'webmention-forwarder'
+            }
+          )
+          .to_return(
+            status: 201,
+            body: JSON.generate({
+              'number' => 123,
+              'html_url' => 'https://github.com/test-owner/test-repo/pull/123'
+            }),
+            headers: { 'Content-Type' => 'application/json' }
+          )
       end
 
       it 'creates a GitHub PR and returns success' do
@@ -51,31 +64,41 @@ describe WebmentionForwarder::Application do
         expect(last_response.status).to eq(200)
         expect(last_response.body).to eq('Webmention processed successfully')
         
-        # Verify the GitHub client was configured correctly
-        expect(Octokit::Client).to have_received(:new).with(
-          access_token: 'test_github_token',
-          api_endpoint: 'https://api.github.com'
-        )
-        
-        # Verify PR creation was called with correct parameters
-        expect(mock_client).to have_received(:create_pull_request) do |repo, base, head, title, body|
-          expect(repo).to eq('test-owner/test-repo')
-          expect(base).to eq('main')
-          expect(head).to match(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-new-webmention$/)
-          expect(title).to match(/^New Webmention Received at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/)
-          expect(body).to eq("source: #{source}\ntarget: #{target}")
-        end
+        # Verify the API request was made with correct parameters
+        expect(WebMock).to have_requested(:post, "https://api.github.com/repos/test-owner/test-repo/pulls")
+          .with { |req|
+            body = JSON.parse(req.body)
+            expect(body['title']).to match(/^New Webmention Received at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/)
+            expect(body['body']).to eq("source: #{source}\ntarget: #{target}")
+            expect(body['head']).to match(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-new-webmention$/)
+            expect(body['base']).to eq('main')
+          }
       end
 
       it 'uses custom GitHub API URL when provided' do
         allow(ENV).to receive(:[]).with('GITHUB_API_URL').and_return('https://custom-github.com/api/v3')
         
+        stub_request(:post, "https://custom-github.com/api/v3/repos/test-owner/test-repo/pulls")
+          .with(
+            headers: {
+              'Authorization' => 'Bearer test_github_token',
+              'Accept' => 'application/vnd.github+json',
+              'Content-Type' => 'application/json',
+              'User-Agent' => 'webmention-forwarder'
+            }
+          )
+          .to_return(
+            status: 201,
+            body: JSON.generate({
+              'number' => 456,
+              'html_url' => 'https://custom-github.com/test-owner/test-repo/pull/456'
+            }),
+            headers: { 'Content-Type' => 'application/json' }
+          )
+        
         post '/webmention', source: 'https://example.com/source', target: 'https://example.com/target'
         
-        expect(Octokit::Client).to have_received(:new).with(
-          access_token: 'test_github_token',
-          api_endpoint: 'https://custom-github.com/api/v3'
-        )
+        expect(WebMock).to have_requested(:post, "https://custom-github.com/api/v3/repos/test-owner/test-repo/pulls")
       end
     end
 
@@ -132,15 +155,27 @@ describe WebmentionForwarder::Application do
     end
 
     context 'with GitHub API errors' do
-      let(:mock_client) { instance_double(Octokit::Client) }
-
       before do
-        allow(Octokit::Client).to receive(:new).and_return(mock_client)
+        # Mock GitHub API to return error
+        stub_request(:post, "https://api.github.com/repos/test-owner/test-repo/pulls")
+          .with(
+            headers: {
+              'Authorization' => 'Bearer test_github_token',
+              'Accept' => 'application/vnd.github+json',
+              'Content-Type' => 'application/json',
+              'User-Agent' => 'webmention-forwarder'
+            }
+          )
+          .to_return(
+            status: 401,
+            body: JSON.generate({
+              'message' => 'Bad credentials'
+            }),
+            headers: { 'Content-Type' => 'application/json' }
+          )
       end
 
       it 'returns 500 when GitHub API returns an error' do
-        allow(mock_client).to receive(:create_pull_request).and_raise(Octokit::Unauthorized.new)
-        
         post '/webmention', source: 'https://example.com/source', target: 'https://example.com/target'
         
         expect(last_response.status).to eq(500)

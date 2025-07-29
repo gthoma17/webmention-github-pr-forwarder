@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 require 'rack'
-require 'octokit'
+require 'net/http'
 require 'json'
 require 'logger'
 require 'time'
+require 'uri'
 
 module WebmentionForwarder
   class Application
@@ -59,11 +60,6 @@ module WebmentionForwarder
       github_token = read_github_token
       github_api_url = ENV['GITHUB_API_URL'] || 'https://api.github.com'
 
-      client = Octokit::Client.new(
-        access_token: github_token,
-        api_endpoint: github_api_url
-      )
-
       timestamp = Time.now.strftime('%Y-%m-%d %H:%M:%S UTC')
       title = "New Webmention Received at #{timestamp}"
       body = "source: #{source}\ntarget: #{target}"
@@ -74,18 +70,52 @@ module WebmentionForwarder
 
       @logger.info "Creating PR in #{repo} with title: #{title}"
 
-      pr = client.create_pull_request(
+      pr_response = create_pull_request_via_api(
+        github_api_url,
+        github_token,
         repo,
-        'main',
-        head_branch,
         title,
-        body
+        body,
+        head_branch,
+        'main'
       )
 
-      @logger.info "Successfully created PR ##{pr.number}: #{pr.html_url}"
-    rescue Octokit::Error => e
+      @logger.info "Successfully created PR ##{pr_response['number']}: #{pr_response['html_url']}"
+    rescue => e
       @logger.error "GitHub API error: #{e.message}"
       raise "GitHub API error: #{e.message}"
+    end
+
+    def create_pull_request_via_api(api_url, token, repo, title, body, head, base)
+      uri = URI("#{api_url}/repos/#{repo}/pulls")
+      
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true if uri.scheme == 'https'
+      
+      request = Net::HTTP::Post.new(uri)
+      request['Authorization'] = "Bearer #{token}"
+      request['Accept'] = 'application/vnd.github+json'
+      request['Content-Type'] = 'application/json'
+      request['User-Agent'] = 'webmention-forwarder'
+      
+      request_body = {
+        title: title,
+        body: body,
+        head: head,
+        base: base
+      }
+      
+      request.body = JSON.generate(request_body)
+      
+      response = http.request(request)
+      
+      unless response.is_a?(Net::HTTPSuccess)
+        error_body = response.body
+        @logger.error "GitHub API request failed with status #{response.code}: #{error_body}"
+        raise "GitHub API request failed with status #{response.code}: #{error_body}"
+      end
+      
+      JSON.parse(response.body)
     end
 
     def read_github_token
