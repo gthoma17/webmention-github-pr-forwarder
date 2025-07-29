@@ -1,0 +1,39 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        ruby-version: ['3.0', '3.1', '3.2']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Ruby ${{ matrix.ruby-version }}
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby-version }}
+        bundler-cache: true
+    
+    - name: Install dependencies
+      run: bundle install
+    
+    - name: Run tests
+      run: bundle exec rspec --format documentation
+    
+    - name: Run code style checks (if rubocop is available)
+      run: |
+        if bundle show rubocop > /dev/null 2>&1; then
+          bundle exec rubocop
+        else
+          echo "Rubocop not available, skipping style checks"
+        fi
+      continue-on-error: true

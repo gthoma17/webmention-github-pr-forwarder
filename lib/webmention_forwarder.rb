@@ -67,13 +67,17 @@ module WebmentionForwarder
       timestamp = Time.now.strftime('%Y-%m-%d %H:%M:%S UTC')
       title = "New Webmention Received at #{timestamp}"
       body = "source: #{source}\ntarget: #{target}"
+      
+      # Create timestamped branch name for the head
+      branch_timestamp = Time.now.strftime('%Y-%m-%dT%H-%M-%S')
+      head_branch = "#{branch_timestamp}-new-webmention"
 
       @logger.info "Creating PR in #{repo} with title: #{title}"
 
       pr = client.create_pull_request(
         repo,
         'main',
-        'new-webmention',
+        head_branch,
         title,
         body
       )
